@@ -1,5 +1,5 @@
 // api/contact.js — Vercel Serverless Function (Edge Runtime)
-// Form POST → save to Supabase → send Gmail notification
+// Form POST → save to Supabase → notify Maanit → auto-reply to sender
 
 export const config = { runtime: 'edge' }
 
@@ -14,7 +14,6 @@ export default async function handler(req) {
   if (req.method === 'OPTIONS') {
     return new Response(null, { status: 204, headers: corsHeaders })
   }
-
   if (req.method !== 'POST') {
     return new Response(JSON.stringify({ error: 'Method not allowed' }), {
       status: 405, headers: corsHeaders,
@@ -40,10 +39,14 @@ export default async function handler(req) {
 
     const timestamp = new Date().toISOString()
 
-    // Run both in parallel — fail loudly if either throws
+    // Get OAuth token once — reuse for both emails
+    const access_token = await getAccessToken()
+
+    // Run all three in parallel
     await Promise.all([
       saveToSupabase({ name, email, subject, message, timestamp }),
-      sendGmailNotification({ name, email, subject, message, timestamp }),
+      sendNotificationToMaanit({ name, email, subject, message, timestamp, access_token }),
+      sendAutoReplyToSender({ name, email, subject, message, access_token }),
     ])
 
     return new Response(
@@ -59,7 +62,24 @@ export default async function handler(req) {
   }
 }
 
-// ─── Supabase ────────────────────────────────────────────────────────────────
+// ─── OAuth2: get fresh access token ──────────────────────────────────────────
+async function getAccessToken() {
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id:     process.env.GMAIL_CLIENT_ID,
+      client_secret: process.env.GMAIL_CLIENT_SECRET,
+      refresh_token: process.env.GMAIL_REFRESH_TOKEN,
+      grant_type:    'refresh_token',
+    }),
+  })
+  const data = await res.json()
+  if (!data.access_token) throw new Error(`Token error: ${JSON.stringify(data)}`)
+  return data.access_token
+}
+
+// ─── Supabase ─────────────────────────────────────────────────────────────────
 async function saveToSupabase({ name, email, subject, message, timestamp }) {
   const res = await fetch(
     `${process.env.SUPABASE_URL}/rest/v1/contact_submissions`,
@@ -77,36 +97,20 @@ async function saveToSupabase({ name, email, subject, message, timestamp }) {
   if (!res.ok) throw new Error(`Supabase: ${await res.text()}`)
 }
 
-// ─── Gmail (OAuth2 refresh flow) ─────────────────────────────────────────────
-async function sendGmailNotification({ name, email, subject, message, timestamp }) {
-  // 1. Exchange refresh token for a live access token
-  const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id:     process.env.GMAIL_CLIENT_ID,
-      client_secret: process.env.GMAIL_CLIENT_SECRET,
-      refresh_token: process.env.GMAIL_REFRESH_TOKEN,
-      grant_type:    'refresh_token',
-    }),
-  })
-  const { access_token } = await tokenRes.json()
-
-  // 2. Compose the email body
+// ─── Email 1: Notification to Maanit ─────────────────────────────────────────
+async function sendNotificationToMaanit({ name, email, subject, message, timestamp, access_token }) {
   const localTime = new Date(timestamp).toLocaleString('en-IN', {
-    timeZone: 'Asia/Kolkata',
-    dateStyle: 'full',
-    timeStyle: 'short',
+    timeZone: 'Asia/Kolkata', dateStyle: 'full', timeStyle: 'short',
   })
 
-  const emailLines = [
+  const lines = [
     `To: maanitkhatkar22@gmail.com`,
     `Reply-To: "${name}" <${email}>`,
     `Subject: [CV Contact] ${subject || 'New message'} — from ${name}`,
     `Content-Type: text/plain; charset=utf-8`,
     `MIME-Version: 1.0`,
     ``,
-    `You have a new message from your CV website.`,
+    `New message from your CV website.`,
     ``,
     `Name    : ${name}`,
     `Email   : ${email}`,
@@ -121,13 +125,63 @@ async function sendGmailNotification({ name, email, subject, message, timestamp 
     `Hit reply to respond directly to ${email}.`,
   ]
 
-  // 3. Base64url encode the RFC 2822 message
-  const raw = emailLines.join('\r\n')
+  await sendEmail(lines.join('\r\n'), access_token)
+}
+
+// ─── Email 2: Auto-reply to the sender ───────────────────────────────────────
+async function sendAutoReplyToSender({ name, email, subject, message, access_token }) {
+  const firstName = name.trim().split(' ')[0]
+
+  // Detect topic from subject/message for a slightly personalised opening
+  const combined = `${subject || ''} ${message}`.toLowerCase()
+  let topicLine = `I've received your message`
+  if (combined.includes('blockchain') || combined.includes('web3') || combined.includes('solidity')) {
+    topicLine = `I noticed you're reaching out about blockchain/Web3 — always happy to talk about that`
+  } else if (combined.includes('ai') || combined.includes('ml') || combined.includes('interview') || combined.includes('prep')) {
+    topicLine = `I noticed you're reaching out about AI — great topic to connect on`
+  } else if (combined.includes('job') || combined.includes('internship') || combined.includes('opportunity') || combined.includes('hire') || combined.includes('role')) {
+    topicLine = `I noticed you're reaching out about a potential opportunity — I'd love to learn more`
+  } else if (combined.includes('project') || combined.includes('collaborate') || combined.includes('collab')) {
+    topicLine = `I noticed you're interested in collaborating — always open to working on exciting projects`
+  } else if (subject) {
+    topicLine = `I've received your message regarding "${subject}"`
+  }
+
+  const lines = [
+    `To: "${name}" <${email}>`,
+    `From: "Maanit Khatkar" <maanitkhatkar22@gmail.com>`,
+    `Subject: Re: ${subject || 'Your message'} — Maanit Khatkar`,
+    `Content-Type: text/plain; charset=utf-8`,
+    `MIME-Version: 1.0`,
+    ``,
+    `Hi ${firstName},`,
+    ``,
+    `Thanks for reaching out! ${topicLine} and will get back to you shortly.`,
+    ``,
+    `I typically respond within 24–48 hours. In the meantime, feel free to check out my work:`,
+    ``,
+    `  GitHub   → https://github.com/Maanitk22`,
+    `  LinkedIn → https://linkedin.com/in/maanitkhatkar`,
+    ``,
+    `Talk soon,`,
+    `Maanit Khatkar`,
+    `Computer Science Engineer · Blockchain & AI Builder`,
+    `CCET, Chandigarh`,
+    ``,
+    `─────────────────────────────────────────────`,
+    `Your original message:`,
+    message,
+  ]
+
+  await sendEmail(lines.join('\r\n'), access_token)
+}
+
+// ─── Shared Gmail send helper ─────────────────────────────────────────────────
+async function sendEmail(raw, access_token) {
   const encoded = btoa(unescape(encodeURIComponent(raw)))
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 
-  // 4. Send via Gmail API
-  const sendRes = await fetch(
+  const res = await fetch(
     'https://gmail.googleapis.com/gmail/v1/users/me/messages/send',
     {
       method: 'POST',
@@ -138,5 +192,5 @@ async function sendGmailNotification({ name, email, subject, message, timestamp 
       body: JSON.stringify({ raw: encoded }),
     }
   )
-  if (!sendRes.ok) throw new Error(`Gmail: ${await sendRes.text()}`)
+  if (!res.ok) throw new Error(`Gmail send: ${await res.text()}`)
 }
