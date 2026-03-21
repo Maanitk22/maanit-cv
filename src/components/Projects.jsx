@@ -44,7 +44,7 @@ const projects = [
       'Built at Google GenAI Hackathon 2025',
     ],
     github: 'https://github.com/Maanitk22',
-    live: null,
+    live: 'https://prep-ai-blush.vercel.app/',
     accent: '#1a4a8a',
   },
   {
@@ -59,7 +59,7 @@ const projects = [
       'Scalable, accessible component architecture',
     ],
     github: 'https://github.com/Maanitk22',
-    live: null,
+    live: 'https://www.ccet.ac.in',
     accent: '#6b3fa0',
   },
 ]
@@ -123,15 +123,6 @@ export default function Projects() {
                   ))}
                 </ul>
                 <div className={styles.links}>
-                  <a
-                    href={p.github}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={styles.linkBtn}
-                    onClick={e => e.stopPropagation()}
-                  >
-                    GitHub ↗
-                  </a>
                   {p.live && (
                     <a
                       href={p.live}
@@ -143,6 +134,15 @@ export default function Projects() {
                       Live Demo ↗
                     </a>
                   )}
+                  <a
+                    href={p.github}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={styles.linkBtn}
+                    onClick={e => e.stopPropagation()}
+                  >
+                    GitHub ↗
+                  </a>
                 </div>
               </div>
             </div>
