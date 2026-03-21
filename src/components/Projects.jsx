@@ -67,6 +67,15 @@ const projects = [
 export default function Projects() {
   const [active, setActive] = useState(null)
 
+  const handleCardClick = (e, cardId) => {
+    // Don't toggle if clicking on a link or button
+    if (e.target.closest('a') || e.target.closest('button')) {
+      return
+    }
+    e.stopPropagation()
+    setActive(active === cardId ? null : cardId)
+  }
+
   return (
     <section className={styles.section} id="projects">
       <div className={styles.header}>
@@ -77,13 +86,13 @@ export default function Projects() {
         </div>
       </div>
 
-      <div className={styles.list}>
+      <div className={`${styles.list} reveal`}>
         {projects.map((p, i) => (
           <article
             key={p.id}
-            className={`${styles.card} reveal ${active === p.id ? styles.expanded : ''}`}
+            className={`${styles.card} ${active === p.id ? styles.expanded : ''}`}
             style={{ '--card-accent': p.accent, animationDelay: `${i * 0.1}s` }}
-            onClick={() => setActive(active === p.id ? null : p.id)}
+            onClick={(e) => handleCardClick(e, p.id)}
             data-hover
           >
             <div className={styles.cardTop}>
