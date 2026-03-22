@@ -41,7 +41,7 @@ export default function Contact() {
       <div className={styles.inner}>
         {/* Left col */}
         <div className={styles.left}>
-          <span className={styles.sectionNum}>05</span>
+          <span className={styles.sectionNum}>06</span>
           <h2 className={`${styles.title} reveal`}>Let's talk</h2>
           <p className={`${styles.body} reveal`}>
             Whether it's a project collaboration, an opportunity, or just want
